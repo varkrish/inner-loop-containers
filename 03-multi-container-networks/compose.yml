@@ -1,0 +1,43 @@
+services:
+  web:
+    image: registry.access.redhat.com/ubi9/nginx-124:latest
+    command: ["nginx", "-g", "daemon off;"]
+    ports:
+      - "8083:8080"
+    volumes:
+      - ./nginx/proxy.conf:/opt/app-root/etc/nginx.default.d/proxy.conf:ro,Z
+      - ./web/index.html:/opt/app-root/src/index.html:ro,Z
+    depends_on:
+      - api
+    networks:
+      - frontend-net
+
+  api:
+    image: registry.access.redhat.com/ubi9/nodejs-20:latest
+    working_dir: /opt/app-root/src
+    volumes:
+      - ./api:/opt/app-root/src:ro,Z
+    command: ["node", "server.js"]
+    environment:
+      DATASTORE_URL: "http://datastore:4000"
+    depends_on:
+      - datastore
+    networks:
+      - frontend-net
+      - backend-net
+
+  datastore:
+    image: registry.access.redhat.com/ubi9/nodejs-20:latest
+    working_dir: /opt/app-root/src
+    volumes:
+      - ./datastore:/opt/app-root/src:ro,Z
+    command: ["node", "server.js"]
+    networks:
+      - backend-net
+
+networks:
+  frontend-net:
+    driver: bridge
+  backend-net:
+    driver: bridge
+    internal: true

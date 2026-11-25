@@ -1,0 +1,9 @@
+{
+  "name": "ocp-ubi9-sample",
+  "version": "1.0.0",
+  "description": "Minimal Red Hat UBI 9 app demonstrating OCP-ready single-stage and multi-stage Containerfiles",
+  "scripts": {
+    "build": "node src/build.js",
+    "start": "node src/server.js"
+  }
+}

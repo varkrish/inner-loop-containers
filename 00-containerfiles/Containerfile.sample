@@ -1,0 +1,78 @@
+# =============================================================================
+# Sample Single-Stage Containerfile — Red Hat OpenShift (OCP) Best Practices
+# =============================================================================
+# Build: podman build -f Containerfile.sample -t localhost/ocp-sample:1.0 .
+# Run:   podman run --rm -p 8086:8080 localhost/ocp-sample:1.0
+# Test OCP arbitrary UID (restricted-v2 SCC simulation; 12345 is not in /etc/passwd):
+#        podman run --rm --user 12345:0 -p 8086:8080 localhost/ocp-sample:1.0
+# =============================================================================
+
+# 1. BASE IMAGE (Trusted Red Hat Enterprise Registry)
+#    Use Red Hat Universal Base Images (UBI 9) from registry.access.redhat.com.
+#    UBI 9 images are CVE-tracked, freely redistributable, and pre-configured
+#    for rootless execution (default numeric UID 1001, GID 0).
+#    Tip for OCP production: pin a specific minor tag (e.g. :9.5) or @sha256 digest
+#    to guarantee reproducible builds across dev, staging, and prod clusters.
+FROM registry.access.redhat.com/ubi9/nodejs-20:latest
+
+# 2. OCI & OPENSHIFT METADATA LABELS
+#    Surfaced in Red Hat Quay, OpenShift Web Console, and Red Hat ACS scans.
+LABEL org.opencontainers.image.title="OCP UBI 9 Node.js Sample" \
+      org.opencontainers.image.description="Single-stage UBI 9 app compliant with OpenShift restricted-v2 SCC" \
+      org.opencontainers.image.vendor="Red Hat Demo" \
+      io.k8s.display-name="OCP UBI 9 Node.js Sample" \
+      io.k8s.description="Rootless Node.js 20 HTTP service listening on unprivileged port 8080" \
+      io.openshift.expose-services="8080:http" \
+      io.openshift.tags="nodejs,ubi9,podman,openshift"
+
+# 3. BUILD ARGUMENTS & RUNTIME ENVIRONMENT
+#    ARG values exist only at build time; promote to ENV if needed at runtime.
+#    Never pass secrets via ARG or ENV — inject secrets via OCP Secrets/CSI mounts.
+ARG APP_VERSION=1.0.0
+ENV APP_VERSION="${APP_VERSION}" \
+    NODE_ENV="production" \
+    PORT="8080"
+
+# 4. WORKING DIRECTORY
+#    UBI 9 language images standardize on /opt/app-root/src with GID 0 permissions.
+WORKDIR /opt/app-root/src
+
+# 5. LAYER CACHING & ARBITRARY-UID OWNERSHIP (--chown=1001:0)
+#    Copy dependency manifests BEFORE application source so cached dependency
+#    layers are reused whenever only application code changes.
+#    Assigning group 0 (root group) with --chown=1001:0 ensures compatibility
+#    with OpenShift's restricted-v2 SCC, which runs pods with a random UID
+#    and primary GID 0.
+COPY --chown=1001:0 package.json ./
+# (When using external dependencies, run: RUN npm ci --omit=dev)
+
+COPY --chown=1001:0 src/server.js ./src/server.js
+
+# 6. GROUP-WRITABLE PERMISSIONS FOR OPENSHIFT ARBITRARY UIDs
+#    chmod -R g=u mirrors owner permissions to GID 0 so any random OCP UID
+#    assigned to the pod can read/execute (and write to designated dirs) safely.
+#    Note: keep runtime writes minimal so containers also support
+#    securityContext.readOnlyRootFilesystem: true with emptyDir mounts in OCP.
+RUN chmod -R g=u /opt/app-root/src
+
+# 7. UNPRIVILEGED PORT (>= 1024)
+#    OpenShift restricted-v2 drops ALL Linux capabilities (including NET_BIND_SERVICE),
+#    so containers cannot bind ports < 1024 (like 80/443). Always use >= 1024.
+EXPOSE 8080
+
+# 8. EXPLICIT NUMERIC NON-ROOT USER
+#    OpenShift enforces runAsNonRoot: true. Always specify a NUMERIC UID (not a
+#    username string like "node") so Kubernetes/OCP can verify non-root statically
+#    before starting the container.
+USER 1001
+
+# 9. HEALTH CHECKS & OPENSHIFT PROBES
+#    In OCP, configure livenessProbe and readinessProbe on HTTP GET /healthz:8080
+#    in your Deployment manifest (OCI image specs omit container-embedded
+#    HEALTHCHECK instructions by default; exposing /healthz works seamlessly in
+#    both local Podman Compose and OpenShift).
+
+# 10. EXEC-FORM ENTRYPOINT / CMD FOR GRACEFUL SHUTDOWN
+#     Use JSON exec form (not shell form) so the app runs as PID 1 and directly
+#     receives SIGTERM during OpenShift rolling updates and pod evictions.
+CMD ["node", "src/server.js"]

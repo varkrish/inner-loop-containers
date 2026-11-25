@@ -1,0 +1,12 @@
+# Exclude files not needed in the container build context.
+# Keeps Podman builds and OpenShift (OCP) BuildConfigs fast and prevents
+# leaking local secrets, git history, or build artifacts into image layers.
+.git
+.gitignore
+.env
+.env.*
+README.md
+Containerfile*
+dist/
+node_modules/
+*.log

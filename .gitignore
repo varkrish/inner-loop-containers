@@ -1,0 +1,15 @@
+# Internal prompt / demo notes
+goal.md
+
+# OS / editor artifacts
+.DS_Store
+*.swp
+*.bak
+.idea/
+.vscode/
+
+# Local build & cache outputs
+00-containerfiles/dist/
+node_modules/
+.tldr/
+*.log

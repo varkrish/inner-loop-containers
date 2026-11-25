@@ -1,0 +1,59 @@
+services:
+  data-service:
+    build:
+      context: ./data-service
+      dockerfile: Containerfile
+    environment:
+      READY_DELAY_MS: "3000"
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4000/healthz || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 1s
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Containerfile
+    environment:
+      DATA_SERVICE_URL: "http://data-service:4000"
+    networks:
+      - frontend-net
+      - backend-net
+    depends_on:
+      data-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 1s
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Containerfile
+    ports:
+      - "8085:8080"
+    networks:
+      - frontend-net
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 1s
+
+networks:
+  frontend-net:
+    driver: bridge
+  backend-net:
+    driver: bridge
+    internal: true

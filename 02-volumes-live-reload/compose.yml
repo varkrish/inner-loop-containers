@@ -1,0 +1,15 @@
+services:
+  app:
+    image: registry.access.redhat.com/ubi9/nodejs-20:latest
+    container_name: demo-live-reload
+    working_dir: /opt/app-root/src
+    # Stat-based watcher (works reliably on both Linux and macOS Podman Machine virtiofs)
+    command: ["node", "watch.js"]
+    ports:
+      - "8082:3000"
+    volumes:
+      # :Z sets a private SELinux label on RHEL/Fedora hosts so the container can access the bind mount
+      - ./src:/opt/app-root/src:Z
+    environment:
+      PORT: "3000"
+      APP_MESSAGE: "Hello from Podman Inner Loop!"

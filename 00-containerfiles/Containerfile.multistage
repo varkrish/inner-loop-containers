@@ -1,0 +1,71 @@
+# =============================================================================
+# Multi-Stage (Build -> Runtime) Containerfile — Red Hat OpenShift (OCP) Ready
+# =============================================================================
+# Why multi-stage builds matter for OpenShift & enterprise security:
+#   - Build tools, SDKs, devDependencies, and raw source stay ONLY in Stage 1.
+#   - Stage 2 ships ONLY the compiled output on a lean Red Hat UBI 9 runtime.
+#   - Result: smaller image pulls across OCP nodes, fewer CVEs in Quay / ACS,
+#     and zero build-time secrets or toolchains in production pods.
+#
+# Build: podman build -f Containerfile.multistage --build-arg APP_VERSION=1.0.0 -t localhost/ocp-multistage:1.0 .
+# Run:   podman run --rm -p 8087:8080 localhost/ocp-multistage:1.0
+# Test OCP arbitrary UID (restricted-v2 SCC simulation; 12345 is not in /etc/passwd):
+#        podman run --rm --user 12345:0 -p 8087:8080 localhost/ocp-multistage:1.0
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# STAGE 1: BUILDER (Compile / Bundle Application Assets)
+# -----------------------------------------------------------------------------
+# Uses full Node.js 20 toolchain on UBI 9 to produce production artifacts.
+# Everything in this stage is discarded after COPY --from=builder below.
+FROM registry.access.redhat.com/ubi9/nodejs-20:latest AS builder
+
+ARG APP_VERSION=1.0.0
+ENV APP_VERSION="${APP_VERSION}"
+
+WORKDIR /opt/app-root/src
+
+# Copy manifest first to maximize build-layer cache hits across rebuilds.
+COPY --chown=1001:0 package.json ./
+# (For apps with dependencies: RUN npm ci)
+
+# Copy build sources and execute the production build into /opt/app-root/src/dist
+COPY --chown=1001:0 src/build.js ./src/build.js
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# STAGE 2: RUNTIME (Minimal Production Image for OpenShift)
+# -----------------------------------------------------------------------------
+# Starts fresh from Red Hat UBI 9 NGINX 1.24 — Node.js and build scripts are
+# completely absent from the final image (~361 MB vs ~625 MB builder image).
+FROM registry.access.redhat.com/ubi9/nginx-124:latest AS runtime
+
+# OCI & OpenShift labels belong in the FINAL stage so they ship with the image.
+LABEL org.opencontainers.image.title="OCP UBI 9 Multi-Stage Web App" \
+      org.opencontainers.image.description="Static app built in ubi9/nodejs-20 and served from ubi9/nginx-124" \
+      org.opencontainers.image.vendor="Red Hat Demo" \
+      io.k8s.display-name="OCP UBI 9 Multi-Stage Web App" \
+      io.k8s.description="Multi-stage UBI 9 runtime image compliant with OpenShift restricted-v2 SCC" \
+      io.openshift.expose-services="8080:http" \
+      io.openshift.tags="nginx,ubi9,multistage,openshift"
+
+# Copy ONLY the compiled dist/ output from the builder stage with UID 1001 & GID 0.
+# UBI 9 nginx-124 serves static files from /opt/app-root/src and includes
+# extra location blocks from /opt/app-root/etc/nginx.default.d/*.conf.
+COPY --from=builder --chown=1001:0 /opt/app-root/src/dist/ /opt/app-root/src/
+COPY --chown=1001:0 nginx/app.conf /opt/app-root/etc/nginx.default.d/app.conf
+
+# Ensure GID 0 permissions mirror owner permissions so OpenShift's random UID
+# (restricted-v2 SCC) can read all served assets and NGINX config snippets.
+RUN chmod -R g=u /opt/app-root/src /opt/app-root/etc/nginx.default.d
+
+# Unprivileged port 8080 (required under OCP restricted-v2; ports < 1024 fail).
+EXPOSE 8080
+
+# Explicit numeric non-root UID required for Kubernetes/OCP runAsNonRoot: true.
+USER 1001
+
+# Note for OCP Deployments: point readinessProbe & livenessProbe to GET /healthz:8080.
+# Explicit exec-form CMD overrides the S2I usage script in ubi9/nginx-124 and
+# forwards SIGTERM cleanly to NGINX during OCP rolling updates.
+CMD ["nginx", "-g", "daemon off;"]

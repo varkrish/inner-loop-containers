@@ -1,0 +1,6 @@
+services:
+  web:
+    image: registry.access.redhat.com/ubi9/httpd-24:latest
+    container_name: demo-simple-http
+    ports:
+      - "8080:8080"
